@@ -1,0 +1,204 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <malloc.h>
+#include <time.h>
+#include "menu.h"
+#include "fingerprint.h"
+#include "hash_dict.h"
+#include "hash_matches_dict.h"
+#include "hash_min_sharing_dict.h"
+#define MAX_LINE_LENGTH 10
+
+int addList(int* tmp, int j2,int k);
+//int getEntryKey(int* kmer,int seed,int k);
+//unsigned short int getEntryKey(int* kmer,int seed,int k);
+int getEntryKey(int* kmer,int hdictsize,int k);
+
+int main(){
+  	fingerprint* f_list,*f_temp; //lista di puntatori a fingerprint
+  	char line[MAX_LINE_LENGTH], temp[10];//stringhe di appoggio
+  	FILE* fp = fopen("input.txt", "r"); //apertura file input
+	hash_dict* hdict=(hash_dict*)malloc(sizeof(hash_dict));//creazion hash_dict
+	int hdictsize=50000000; //parametro size per tutti gli hash dict
+	int min_shared_kmers = 4;
+	initHashDict(hdict,hdictsize); //inizializzazione di hdict
+
+  	if (fp == NULL) { //controllo se è presente il file input
+     		printf("no such file.");
+     		return 0;
+  	}
+  	f_list = (fingerprint*)malloc(sizeof(fingerprint) * 21000);//inizializzazione della lista di read con quante read ci sono all'interno del file
+	init_menu("intro.txt"); //visualizzazione intto
+
+ 	 //creariamo le fingerprint con i relativi id e il parametro reverse and complement
+  	int i=-1,k=7,mintotlen = 40; //inizialiaziamo i parametri k (fa riferimenti ai k mer) e mintotlen(valore minimo che deve assumere la somma dei valori presenti nel kmer)
+	long int rscount=0,rscount2=0; //vairabili per la visualizzazione di parametri
+
+	time_t seconds=time(NULL); //comincio a prendere il tempo
+  	while(fscanf(fp,"%s", line)>0) { //finchè c'è qualcosa da leggere ne file
+        	if(strcmp(line, "|")){ //ignoriamo i |
+	   		int linetemp = strlen(line);
+	   		if(linetemp>=3 && line[linetemp-2] == '_'){ //verifico se è una stringa che come penultimo carattere ha _
+				//printf("%d\n",(f_list+i)->size);
+				//if(!atoi(line)){
+	     			//if(i>=0) viewList(f_list+i); //visualizzo l'ultimo fingerprint
+	     			i++;
+             			sscanf(line,"%[^_]",temp);
+	     			(f_list+i)->id = atoi(temp);
+             			sscanf(line,"%*[^_]%*c%s",temp);
+	     			(f_list+i)->isreverse = atoi(temp);
+				initArray(f_list+i);//viene inizializzata la fingerprint che avrà l'id e isreverse letti
+	     			//printf("[Id : %d ,Reverse: %d]\n",(f_list+i)->id,(f_list+i)->isreverse);
+	   		}
+
+ 	   		else{addInFingerprintList(f_list+i, atoi(line));rscount++;} //viene aggiunto l'intero alla fingerprint
+		}
+  	}
+	printf("Secondi lettura linee: %ld\n",time(NULL)-seconds); //display tempo richiesto
+
+	if(i==-1){printf("Non sono state lette righe.\n"); return 0;} 
+
+	int *kmer,*tmp;//array di appoggio
+
+	seconds=time(NULL);//viene resettato il tempo
+	for(int j1=0;j1<=i;j1++){//per goni read
+		//fingerprint* f_list_temp = f_list=f_list+j1;
+		tmp=(f_list+j1)->list;
+		for(int j2=0;j2<=(f_list+j1)->used - k;j2++){//finché posso prendere almeno k elemti
+			int seed=addList(tmp,j2,k) - mintotlen; //viene verificata che la somma degli interi presenti all'iterno del kmer fa almeo mintotlen
+			if(seed >= 0){
+				kmer=(int*)malloc(k*sizeof(int));
+				memcpy(kmer, tmp+j2, k*sizeof(int));
+				//for(int t=0;t<k;t++){printf("%d ",kmer[t]);}printf("\n");
+				//printf("a%d - %d\n",j1,j2);
+				//printf("%d\n",key);
+				int key = getEntryKey(kmer,hdictsize,k);//viene computata la chiave per hash dict
+				add_in_hash_dict(&hdict->dicts_list[key],kmer,j1,j2,k); //viene salvata all'inetro del dizionario che ha collizioni con la chiave l'entry che ha 
+										        //per chiave il kmer e valore la coppia (READ,START)
+				//printf("aa\n");
+				rscount2++;
+			}
+		}
+		//printf("%d|%d - %d\n",(f_list)->id,(f_list)->isreverse,(f_list)->used);
+		//printf("%ld rimanenti.\n",rscount-rscount2);
+		//f_temp=f_list;
+		//f_list+=1;
+		//free(f_temp);
+	}
+	printf("Secondi creazione dizionario: %ld\n",time(NULL)-seconds);//diplsy tempo creazione dict_occ_kmers
+	//printf("%d\n",dict->used);
+	//viewHashDict(hdict,k);
+
+	//inizializzazione min_share_dict e matches_dict
+
+	hash_msdict* hmsdict=(hash_msdict*)malloc(sizeof(hash_msdict));
+	initHashMSDict(hmsdict,hdictsize);
+
+	hash_mdict* hmdict=(hash_mdict*)malloc(sizeof(hash_mdict));
+        initHashMDict(hmdict,hdictsize);
+
+	seconds=time(NULL);
+
+	for(int i=0;i<hdictsize;i++){//per ogni entry di dict_occ_kmers
+		dict_kmers *tempdict=hdict->dicts_list[i];//salviamo un puntatore temporaneo all'i-esimo diizonario
+		if(tempdict){//se è stata allocata memoria
+			for(int j=0;j<tempdict->used;j++){//per ogni entry del dizionario
+				int read1,read2;
+				int start1,start2;
+				dict_entry_kmers *tempentry = tempdict->head[j];//viene salvato un puntatore alla j-esima entry del dizionario
+				for(int z1=0;z1<tempentry->used;z1++){ //per  ogni coppia (READ,START) all'interno della entry
+					read1 = tempentry->head[z1]->read;
+					start1 = tempentry->head[z1]->start;
+					for(int z2=z1+1;z2<tempentry->used;z2++){//per ogni coppia (READ,START) partendo dalla z1+1-esima posizione all'interno della entry
+						//printf("a");
+						read2 = tempentry->head[z2]->read;
+						start2 = tempentry->head[z2]->start;
+						int *reads=(int*)malloc(2*sizeof(int));
+						reads[0]=read1;
+						reads[1]=read2;
+						int key = getEntryKey(reads,hdictsize,2); //viene generata la chiave dei dizionari
+						add_in_hash_msdict(&hmsdict->dicts_list[key],reads); //viene incrementato il valore che ha come chiave reads in ,atches_dict
+						add_in_hash_mdict(&hmdict->dicts_list[key],reads,start1,start2); //viene aggiornata la entry che ha come chiave reads in min_saring_dict
+					}
+				}
+			}
+		}
+	}
+	printf("Secondi creazione msdict e mdict: %ld\n",time(NULL)-seconds);//viene mostrato quanto tempo ci è voluto a create matches_dict e min_sharing_dict
+	//viewMSDict(msdict);
+	//viewHashMSDict(hmsdict);
+	//printf("\n");
+	//viewHashMDict(hmdict);
+	printf("\n");
+
+
+	for(int i=0;i<hdictsize;i++){//per ogni entry di match_dict
+		matches_dict *tempdict=hmdict->dicts_list[i];//salviamo un puntatore temporaneo all'i-esimo diizonario
+		if(tempdict){
+			for(int j=0;j<tempdict->used;j++){//per ogni entry del dizionario
+				matches_dict_entry *tempentry = tempdict->head[j];//viene salvato un puntatore alla j-esima entry del dizionario
+				int key = getEntryKey(tempentry->reads,hdictsize,2);
+				if(min_shared_kmers == 1 || &hmsdict->dicts_list[key]->value >= min_shared_kmers){
+					if()
+					(start1, end1, start2, end2)
+				}
+			}
+		}
+
+	}
+
+
+
+
+  return 0;
+}
+
+/*
+in: tmp,j2,k
+out: la somma di k interi del vetttore temp partendo dalla posizione j2
+*/
+int addList(int* tmp, int j2,int k){
+	int tot=0;
+	for(int i=0;i<k;i++){tot+=tmp[j2+i];}
+	return tot;
+}
+
+/*
+int getEntryKey(int* kmer,int seed,int k){
+	int tot=seed;
+	for(int i=0;i<k;i++){tot+=kmer[i]*(i+1);}
+	return tot%1000;
+}
+*/
+/*
+unsigned short int getEntryKey(int* kmer,int seed,int k){
+	char str[128];
+	int index = 0;
+	for (int i=0; i<k; i++)
+	   index += snprintf(&str[index], 128-index, "%d", kmer[i]);
+
+	unsigned short int result = 0x5555;
+
+	for(int i=0;i<strlen(str);i++){
+       		result ^= (unsigned short int)str[i];
+        	result = result<<3;
+    	}
+	return result;
+}
+*/
+
+/*
+funzione hash per la generazione di una chiave intera
+*/
+int getEntryKey(int* kmer,int hdictsize,int k){
+
+        unsigned int result = 0x55555555;
+
+        for(int i=0;i<k;i++){
+                result ^= kmer[i];
+                result = result<<5;
+        }
+	result%=hdictsize;
+        return result;
+}
